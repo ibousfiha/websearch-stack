@@ -48,7 +48,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-      start_period: 5s
     mem_limit: 256m
     volumes:
       - redis_data:/data
@@ -81,7 +80,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-      start_period: 5s
     mem_limit: 512m
     logging: *default-logging
 
@@ -101,7 +99,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 20s
     logging: *default-logging
 
   # ── fastCRW (Firecrawl-compatible Rust scraper) ──────────
@@ -124,7 +121,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 2
-      start_period: 5s
     mem_limit: 256m
     logging: *default-logging
 
@@ -140,7 +136,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 3
-      start_period: 5s
     logging: *default-logging
 
 volumes:

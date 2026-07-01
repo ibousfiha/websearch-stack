@@ -1,0 +1,18 @@
+# docker-compose.override.yml — per-developer port overrides
+# Copy this file and customize the host ports to avoid conflicts.
+#
+#   cp docker-compose.override.template.yml docker-compose.override.yml
+#
+# Docker Compose loads docker-compose.override.yml automatically.
+# It is gitignored — changes stay local.
+
+services:
+  # SearXNG web UI + API
+  searxng:
+    ports:
+      - "34567:8080"
+
+  # fastCRW Firecrawl-compatible scraper API
+  crw:
+    ports:
+      - "34568:3000"
