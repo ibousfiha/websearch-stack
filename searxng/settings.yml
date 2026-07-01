@@ -1,0 +1,186 @@
+# SearXNG Settings (WebSearch Stack) — merged with built-in defaults via use_default_settings
+# https://docs.searxng.org/admin/settings/settings.yml
+#
+# Strategy:
+#   - Zero CAPTCHA suspension — retry immediately instead of waiting hours
+#   - Redis cache (Valkey) to reduce upstream requests
+#   - Per-engine retries & timeouts for fast+reliable responses
+#   - DuckDuckGo through Tor via .onion + JSON API (bypasses clearnet Tor block)
+#   - Startpage through Tor SOCKS5 (avoids CAPTCHA from datacenter IPs)
+#   - Google & Brave HTML: direct clearnet (no local Squid)
+#   - Brave API: official API key as primary Brave source
+
+use_default_settings: true
+
+general:
+  instance_name: "Precoss AI Search"
+  debug: false
+
+search:
+  safe_search: 0
+  autocomplete: "google"
+  autocomplete_min: 4
+  default_lang: "auto"
+  formats:
+    - html
+    - json
+  # Don't suspend engines — retry with a different proxy/IP instead
+  # of waiting hours for suspension to expire.
+  suspended_times:
+    SearxEngineCaptcha: 0
+    SearxEngineAccessDenied: 0
+    SearxEngineTooManyRequests: 0
+    cf_SearxEngineCaptcha: 0
+    cf_SearxEngineAccessDenied: 0
+    recaptcha_SearxEngineCaptcha: 0
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "${SEARXNG_SECRET}"  # set via env var in docker-compose.yaml
+  limiter: false
+  image_proxy: false
+  method: "POST"
+
+ui:
+  default_theme: simple
+  results_on_new_tab: false
+
+# ── Redis cache (via SearXNG's Valkey adapter) ──────────────────
+# Shared cache across workers. Reduces upstream search hits.
+# URL can be overridden at runtime via SEARXNG_VALKEY_URL env var.
+valkey:
+  url: "valkey://:${REDIS_PASSWORD:-}@redis:6379/1"
+
+outgoing:
+  # Per-engine timeout: low value so SearXNG responds quickly even when
+  # some engines are slow or timing out.
+  request_timeout: 2.0
+  max_request_timeout: 4.0
+  enable_http2: true
+  pool_connections: 100
+  pool_maxsize: 20
+
+engines:
+  # ── Disabled ──
+  - name: radio_browser
+    disabled: true
+  - name: bing
+    disabled: true
+
+  # ── Google (direct clearnet) ──
+  # No proxy — connects directly. Retries won't help without IP rotation,
+  # but zero suspension means it tries again on the next query.
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+    retries: 0
+
+  # ── Wikipedia ──
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: w
+    disabled: false
+
+  # ── DuckDuckGo via Tor (.onion hidden service + JSON API) ──
+  # Uses the .onion hidden service to get a VQD token, then fetches
+  # results from the JSON API (links.duckduckgo.com/d.js). Both steps
+  # work through Tor — the .onion bypasses DDG's clearnet Tor block
+  # (which returns 403 on Tor exit nodes), and the JSON API accepts
+  # the VQD token from .onion even through Tor.
+  # Depends on ``tor`` service for SOCKS5 proxy at tor:9050.
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    base_url: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion"
+    proxies:
+      all://:
+        - socks5h://tor:9050
+
+  # ── DuckDuckGo (web engine variant) ──
+  - name: duckduckgo web
+    engine: duckduckgo_web
+    shortcut: ddgw
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    base_url: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion"
+    proxies:
+      all://:
+        - socks5h://tor:9050
+
+  # ── DuckDuckGo images, videos, news (all via Tor) ──
+  - name: duckduckgo images
+    engine: duckduckgo_extra
+    categories: [images]
+    ddg_category: images
+    shortcut: ddi
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    base_url: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion"
+    proxies:
+      all://:
+        - socks5h://tor:9050
+
+  - name: duckduckgo videos
+    engine: duckduckgo_extra
+    categories: [videos]
+    ddg_category: videos
+    shortcut: ddv
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    base_url: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion"
+    proxies:
+      all://:
+        - socks5h://tor:9050
+
+  - name: duckduckgo news
+    engine: duckduckgo_extra
+    categories: [news]
+    ddg_category: news
+    shortcut: ddn
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    base_url: "https://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion"
+    proxies:
+      all://:
+        - socks5h://tor:9050
+
+  # ── Brave (HTML scraping — clearnet via direct) ──
+  # Falls back naturally if Brave API is unavailable.
+  - name: brave
+    engine: brave
+    shortcut: br
+    disabled: false
+    retries: 1
+
+  # ── Brave API (official API — primary) ──
+  # Uses the official Brave Search API. Requires an API key from:
+  #   https://api-dashboard.search.brave.com
+  # Free tier: $5/mo credit (~1000 queries). Set via BRAVE_API_KEY env var.
+  - name: braveapi
+    engine: braveapi
+    shortcut: bra
+    disabled: false
+    api_key: "${BRAVE_API_KEY}"
+    results_per_page: 20
+
+  # ── Startpage via Tor SOCKS5 ──
+  # Startpage consistently blocks/times out from datacenter IPs (CAPTCHA).
+  # Tor provides fresh exit nodes and avoids the CAPTCHA wall.
+  - name: startpage
+    engine: startpage
+    shortcut: sp
+    disabled: false
+    retries: 2
+    retry_on_http_error: true
+    proxies:
+      all://:
+        - socks5h://tor:9050

@@ -1,0 +1,148 @@
+# =============================================================================
+# WebSearch Stack — SearXNG + fastCRW Scraper
+# =============================================================================
+# Standalone deployment of SearXNG metasearch engine with:
+#   - Redis (Valkey) cache to reduce upstream requests
+#   - Tor SOCKS5 proxy for DuckDuckGo .onion + Startpage
+#   - fastCRW (Firecrawl-compatible Rust scraper)
+#   - LightPanda lightweight JS renderer for fastCRW
+#
+# Required env vars (copy env.template → .env):
+#   SEARXNG_SECRET     — randomly generated, e.g. from `openssl rand -hex 32`
+#   REDIS_PASSWORD     — Redis auth password
+#   BRAVE_API_KEY      — optional, for Brave Search API
+#
+# Usage:
+#   cp env.template .env       # fill in secrets
+#   docker compose up -d       # start all services
+#   docker compose logs -f     # follow logs
+# =============================================================================
+
+name: websearch-stack
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── Redis (Valkey-compatible cache for SearXNG) ──────────────
+  redis:
+    image: redis:8.8.0-alpine
+    container_name: websearch_redis
+    restart: unless-stopped
+    init: true
+    command: >
+      redis-server
+      --bind 0.0.0.0
+      --requirepass "${REDIS_PASSWORD}"
+      --maxmemory 200mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    mem_limit: 256m
+    volumes:
+      - redis_data:/data
+    logging: *default-logging
+
+  # ── SearXNG (web search meta-engine) ──────────────────────
+  searxng:
+    build:
+      context: .
+      dockerfile: searxng/Dockerfile
+    container_name: websearch_searxng
+    restart: unless-stopped
+    init: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      tor:
+        condition: service_healthy
+    environment:
+      SEARXNG_SECRET: "${SEARXNG_SECRET}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
+    ports:
+      - "8080:8080"
+    volumes:
+      - searxng_data:/data
+      - searxng_cache:/var/cache/searxng
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    mem_limit: 512m
+    logging: *default-logging
+
+  # ── Tor SOCKS5 Proxy (for DuckDuckGo .onion + Startpage) ──
+  tor:
+    image: sebastianalbers/tor:latest
+    container_name: websearch_tor
+    restart: unless-stopped
+    init: true
+    expose:
+      - "9050"
+    volumes:
+      - tor_data:/var/lib/tor
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q '00000000:235A' /proc/net/tcp"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  # ── fastCRW (Firecrawl-compatible Rust scraper) ──────────
+  crw:
+    image: ghcr.io/us/crw:latest
+    container_name: websearch_crw
+    restart: unless-stopped
+    init: true
+    depends_on:
+      crw-lightpanda:
+        condition: service_healthy
+    environment:
+      RUST_LOG: info
+      CRW_CONFIG: config.docker
+      CRW_RENDERER__LIGHTPANDA__WS_URL: "ws://crw-lightpanda:9222/"
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q '00000000:0BB8' /proc/net/tcp"]
+      interval: 3s
+      timeout: 3s
+      retries: 2
+      start_period: 5s
+    mem_limit: 256m
+    logging: *default-logging
+
+  # ── LightPanda (lightweight JS renderer for fastCRW) ─────
+  crw-lightpanda:
+    image: lightpanda/browser:latest
+    container_name: websearch_lightpanda
+    restart: unless-stopped
+    init: true
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q '00000000:2406' /proc/net/tcp"]
+      interval: 3s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging: *default-logging
+
+volumes:
+  redis_data:
+  searxng_data:
+  searxng_cache:
+  tor_data:
